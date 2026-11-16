@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import Sidebar from "./components/Sidebar";
 import GlobeScene from "./components/GlobeScene";
 import SearchBar from "./components/SearchBar";
@@ -7,6 +8,8 @@ import { getAllCountries, getCountryDetailsByCca3 } from "./services/countryServ
 function App() {
   const [countries, setCountries] = useState([]);
   const [selectedCountry, setSelectedCountry] = useState(null);
+  const [hoveredCountry, setHoveredCountry] = useState(null);
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
 
@@ -21,6 +24,14 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const handleMove = (e) => {
+      setMousePos({ x: e.clientX, y: e.clientY });
+    };
+    window.addEventListener("pointermove", handleMove);
+    return () => window.removeEventListener("pointermove", handleMove);
+  }, []);
+
   const selectedFull = useMemo(() => {
     if (!selectedCountry?.name) return selectedCountry;
     const match = countries.find(
@@ -32,6 +43,11 @@ function App() {
   const handleSelect = (country) => {
     setSelectedCountry(country);
     setSidebarOpen(true);
+  };
+
+  const handleReset = () => {
+    setSelectedCountry(null);
+    setSidebarOpen(false);
   };
 
   useEffect(() => {
@@ -62,9 +78,44 @@ function App() {
           countries={countries}
           selectedCountry={selectedFull}
           onSelectCountry={handleSelect}
+          onReset={handleReset}
+          onHoverCountry={setHoveredCountry}
           searchOpen={searchOpen}
         />
       </div>
+
+      {/* 🧭 Sleek Floating Hover Tooltip */}
+      <AnimatePresence>
+        {hoveredCountry && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.88, y: 4 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.88, y: 4 }}
+            transition={{ duration: 0.12 }}
+            className="pointer-events-none fixed z-50 flex items-center gap-2.5 rounded-xl border border-white/20 bg-black/85 px-3.5 py-2 text-xs font-medium text-white shadow-2xl backdrop-blur-md"
+            style={{
+              left: Math.min(window.innerWidth - 200, mousePos.x + 16),
+              top: Math.max(16, Math.min(window.innerHeight - 60, mousePos.y - 18)),
+            }}
+          >
+            {hoveredCountry.flag ? (
+              <img
+                src={hoveredCountry.flag}
+                alt=""
+                className="h-3.5 w-5 rounded-xs object-cover shadow-xs"
+              />
+            ) : hoveredCountry.emoji ? (
+              <span className="text-base leading-none">{hoveredCountry.emoji}</span>
+            ) : null}
+            <span className="font-semibold text-white/95">{hoveredCountry.name}</span>
+            {hoveredCountry.isSmall && (
+              <span className="rounded-full bg-cyan-400/25 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-300">
+                Pinpoint
+              </span>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <SearchBar
         countries={countries}
@@ -76,7 +127,7 @@ function App() {
       <Sidebar
         country={selectedFull}
         open={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
+        onClose={handleReset}
       />
     </div>
   );

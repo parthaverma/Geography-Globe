@@ -2,9 +2,18 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { computeFeatureCentroidLatLng, latLngToVector3 } from "../utils/geoUtils";
+import countriesData from "../data/countries.json";
 
 const NATURAL_EARTH_GEOJSON =
   "https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_110m_admin_0_countries.geojson";
+
+// Known micro-states and island nations to guarantee beacons and hit targets for
+const KNOWN_MICRO_CODES = new Set([
+  "SGP", "MLT", "MDV", "MCO", "BHR", "BRB", "MUS", "SYC", "AND", "LIE",
+  "VAT", "SMR", "CPV", "COM", "STP", "DMA", "GRD", "KNA", "LCA", "VCT",
+  "TON", "WSM", "VUT", "FSM", "PLW", "MHL", "NRU", "TUV", "LUX", "CYP",
+  "QAT", "KWT", "BHS", "JAM", "FJI", "BLZ", "SLV", "LBN", "SVN", "MNE"
+]);
 
 function buildLineGeometryFromFeature(feature, radius) {
   const geom = feature?.geometry;
@@ -38,6 +47,36 @@ function buildLineGeometryFromFeature(feature, radius) {
   return buffer;
 }
 
+// 📍 Glowing Pinpoint Beacon for small countries and island nations
+function BeaconDot({ position, isSelected, isHovered }) {
+  const outerScale = isSelected ? 2.4 : isHovered ? 1.9 : 1.0;
+  const innerScale = isSelected ? 1.7 : isHovered ? 1.4 : 1.0;
+
+  const coreColor = isSelected ? "#ff6600" : isHovered ? "#ffffff" : "#00f0ff";
+  const glowColor = isSelected ? "#ff4400" : isHovered ? "#66e5ff" : "#0099ff";
+
+  return (
+    <group position={position}>
+      {/* Outer luminous glow ring */}
+      <mesh scale={outerScale}>
+        <sphereGeometry args={[0.012, 16, 16]} />
+        <meshBasicMaterial
+          color={glowColor}
+          transparent
+          opacity={isSelected ? 0.85 : isHovered ? 0.7 : 0.38}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+        />
+      </mesh>
+      {/* Inner bright pinpoint core */}
+      <mesh scale={innerScale}>
+        <sphereGeometry args={[0.0055, 16, 16]} />
+        <meshBasicMaterial color={coreColor} depthWrite={false} />
+      </mesh>
+    </group>
+  );
+}
+
 export default function CountryBorders({
   radius = 1,
   selectedKey,
@@ -69,38 +108,86 @@ export default function CountryBorders({
   useEffect(() => {
     if (!raycaster?.params) return;
     if (!raycaster.params.Line) raycaster.params.Line = {};
-    raycaster.params.Line.threshold = 0.12; // Increased for better mobile/small country detection
+    raycaster.params.Line.threshold = 0.12;
   }, [raycaster]);
 
-  const entries = useMemo(() => {
-    return (features || [])
-      .map((f, idx) => {
-        const props = f?.properties || {};
-        const iso3 = props.ISO_A3 || props.ADM0_A3 || props.SOV_A3;
-        const name = props.ADMIN || props.NAME || props.NAME_EN;
-        const key = iso3 && iso3 !== "-99" ? String(iso3) : `__idx_${idx}`;
-
-        const centroid = computeFeatureCentroidLatLng(f);
-        const geometry = buildLineGeometryFromFeature(f, radius);
-        if (!geometry) return null;
-
-        return {
-          key,
-          name,
-          iso3: iso3 && iso3 !== "-99" ? String(iso3) : null,
-          centroid,
-          geometry,
-        };
-      })
-      .filter(Boolean);
-  }, [features, radius]);
-
-  const materials = useMemo(() => {
-    const normal = new THREE.LineBasicMaterial({ color: "#9bbcff", transparent: true, opacity: 0.45 });
-    const hover = new THREE.LineBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.9 });
-    const selected = new THREE.LineBasicMaterial({ color: "#f54106", transparent: true, opacity: 0.95 });
-    return { normal, hover, selected };
+  // Lookup map from countries.json for flags and metadata
+  const countryByCca3 = useMemo(() => {
+    const map = new Map();
+    (countriesData || []).forEach((c) => {
+      if (c.cca3) map.set(String(c.cca3).toUpperCase(), c);
+    });
+    return map;
   }, []);
+
+  const entries = useMemo(() => {
+    const geoCodes = new Set();
+    const list = [];
+
+    // 1. Process GeoJSON features
+    (features || []).forEach((f, idx) => {
+      const props = f?.properties || {};
+      const iso3 = props.ISO_A3 || props.ADM0_A3 || props.SOV_A3;
+      const name = props.ADMIN || props.NAME || props.NAME_EN;
+      const key = iso3 && iso3 !== "-99" ? String(iso3).toUpperCase() : `__idx_${idx}`;
+
+      if (iso3 && iso3 !== "-99") {
+        geoCodes.add(String(iso3).toUpperCase());
+      }
+
+      const centroid = computeFeatureCentroidLatLng(f);
+      const geometry = buildLineGeometryFromFeature(f, radius);
+      if (!geometry || !centroid) return;
+
+      const bboxRadius = geometry.boundingSphere ? geometry.boundingSphere.radius : 0.05;
+      const isSmall = bboxRadius < 0.08 || KNOWN_MICRO_CODES.has(key);
+
+      const info = countryByCca3.get(key);
+
+      list.push({
+        key,
+        name: info?.name || name,
+        officialName: info?.officialName || name,
+        iso3: iso3 && iso3 !== "-99" ? String(iso3).toUpperCase() : null,
+        centroid,
+        geometry,
+        bboxRadius,
+        isSmall,
+        flag: info?.flag || "",
+        emoji: info?.emoji || "",
+        population: info?.population || 0,
+      });
+    });
+
+    // 2. Add micro-states and island nations missing from low-res 110m GeoJSON
+    (countriesData || []).forEach((c) => {
+      const cca3 = String(c.cca3 || "").toUpperCase();
+      if (!cca3 || geoCodes.has(cca3)) return;
+
+      if (
+        KNOWN_MICRO_CODES.has(cca3) ||
+        (Array.isArray(c.latlng) && c.latlng.length === 2 && (c.population < 3000000 || KNOWN_MICRO_CODES.has(cca3)))
+      ) {
+        if (!Array.isArray(c.latlng) || (c.latlng[0] === 0 && c.latlng[1] === 0)) return;
+
+        list.push({
+          key: cca3,
+          name: c.name,
+          officialName: c.officialName || c.name,
+          iso3: cca3,
+          centroid: { lat: c.latlng[0], lng: c.latlng[1] },
+          geometry: null,
+          bboxRadius: 0.02,
+          isSmall: true,
+          flag: c.flag || "",
+          emoji: c.emoji || "",
+          population: c.population || 0,
+        });
+      }
+    });
+
+    return list;
+  }, [features, radius, countryByCca3]);
 
   const lastHoverRef = useRef(null);
 
@@ -110,71 +197,93 @@ export default function CountryBorders({
     }
   });
 
-  // Separate component to handle per-country material with proper hooks
   function BorderLine({ entry, isSelected, isHovered, onSelect, onHover }) {
+    const downPosRef = useRef({ x: 0, y: 0 });
+
     const material = useMemo(() => {
+      if (!entry.geometry) return null;
       if (isSelected) {
-        return new THREE.LineBasicMaterial({ 
-          color: "#ff6600", 
-          transparent: true, 
-          opacity: 1
+        return new THREE.LineBasicMaterial({
+          color: "#ff6600",
+          transparent: true,
+          opacity: 1,
         });
       }
       if (isHovered) {
-        return new THREE.LineBasicMaterial({ 
-          color: "#ffffff", 
-          transparent: true, 
-          opacity: 0.9 
+        return new THREE.LineBasicMaterial({
+          color: "#ffffff",
+          transparent: true,
+          opacity: 0.9,
         });
       }
-      return new THREE.LineBasicMaterial({ 
-        color: "#9bbcff", 
-        transparent: true, 
-        opacity: 0.45 
+      return new THREE.LineBasicMaterial({
+        color: "#9bbcff",
+        transparent: true,
+        opacity: 0.45,
       });
-    }, [isSelected, isHovered]);
+    }, [isSelected, isHovered, entry.geometry]);
 
-    // Create invisible hit sphere for better click detection (especially for small countries)
     const hitSpherePosition = useMemo(() => {
       if (!entry.centroid) return new THREE.Vector3(0, 0, 0);
-      return latLngToVector3(entry.centroid.lat, entry.centroid.lng, radius + 0.01);
-    }, [entry.centroid, radius]);
+      return latLngToVector3(entry.centroid.lat, entry.centroid.lng, radius + 0.003);
+    }, [entry.centroid]);
 
+    // Generous interactive hit sphere (especially large for small countries)
     const hitSphereSize = useMemo(() => {
-      // Estimate size based on geometry bounding sphere
-      const bbox = entry.geometry.boundingSphere;
-      if (!bbox) return 0.15;
-      // Clamp between reasonable sizes for small and large countries
-      return Math.max(0.08, Math.min(0.25, bbox.radius * 2));
-    }, [entry.geometry]);
+      if (entry.isSmall) return 0.038;
+      const bbox = entry.geometry?.boundingSphere;
+      if (!bbox) return 0.12;
+      return Math.max(0.06, Math.min(0.25, bbox.radius * 1.8));
+    }, [entry.isSmall, entry.geometry]);
 
     return (
       <group>
-        {/* Visible border line */}
-        <lineSegments
-          geometry={entry.geometry}
-          material={material}
-        />
-        {/* Invisible hit sphere for easier clicking */}
+        {/* Visible country border line if geometry exists */}
+        {entry.geometry && material && (
+          <lineSegments geometry={entry.geometry} material={material} />
+        )}
+
+        {/* 📍 Glowing Pinpoint Beacon for small nations & island states */}
+        {entry.isSmall && (
+          <BeaconDot
+            position={hitSpherePosition}
+            isSelected={isSelected}
+            isHovered={isHovered}
+          />
+        )}
+
+        {/* 🎯 Generous interactive hit target for easy mouse hover and clicking */}
         <mesh
           position={hitSpherePosition}
           visible={false}
           onPointerOver={(ev) => {
             ev.stopPropagation();
-            onHover?.(entry.key);
+            onHover?.(entry.key, entry);
           }}
           onPointerOut={(ev) => {
             ev.stopPropagation();
-            onHover?.(null);
+            onHover?.(null, null);
           }}
           onPointerDown={(ev) => {
             ev.stopPropagation();
+            downPosRef.current = { x: ev.clientX, y: ev.clientY };
+          }}
+          onClick={(ev) => {
+            ev.stopPropagation();
+            const dist = Math.hypot(
+              ev.clientX - downPosRef.current.x,
+              ev.clientY - downPosRef.current.y
+            );
+            // Ignore drags to prevent accidental selection
+            if (dist > 6) return;
+
             const latlng = entry.centroid;
             const fallbackLatLng = latlng || { lat: 0, lng: 0 };
             onSelect?.({
               key: entry.key,
               name: entry.name,
               cca3: entry.iso3,
+              isSmall: entry.isSmall,
               latlng: [fallbackLatLng.lat, fallbackLatLng.lng],
             });
           }}

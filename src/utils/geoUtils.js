@@ -50,8 +50,34 @@ export function computeFeatureCentroidLatLng(feature) {
   };
 }
 
+/**
+ * Calculates a rotation that strictly spins the globe around its Y axis (polar axis)
+ * to bring the target country's longitude facing the camera.
+ * The North Pole stays strictly (0, 1, 0) and the world day/night regions remain fixed.
+ */
+export function getLongitudeRotationQuaternion(currentQ, lat, lng, cameraPos = new THREE.Vector3(0, 0, 3.6)) {
+  const vLocal = latLngToVector3(lat, lng, 1);
+  const vWorld = vLocal.clone().applyQuaternion(currentQ);
+
+  const currentAzimuth = Math.atan2(vWorld.x, vWorld.z);
+  const camAzimuth = Math.atan2(cameraPos.x, cameraPos.z);
+
+  let diffAngle = camAzimuth - currentAzimuth;
+  while (diffAngle > Math.PI) diffAngle -= 2 * Math.PI;
+  while (diffAngle < -Math.PI) diffAngle += 2 * Math.PI;
+
+  const rotStep = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), diffAngle);
+  const targetQ = currentQ.clone().premultiply(rotStep);
+
+  return { targetQ, diffAngle };
+}
+
 export function quaternionToBringVectorToFront(unitVector) {
-  const from = unitVector.clone().normalize();
-  const to = new THREE.Vector3(0, 0, 1);
-  return new THREE.Quaternion().setFromUnitVectors(from, to);
+  const v = unitVector.clone().normalize();
+  const angleY = -Math.atan2(v.x, v.z);
+  const qY = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), angleY);
+  const v1 = v.clone().applyQuaternion(qY);
+  const angleX = Math.atan2(v1.y, v1.z);
+  const qX = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), angleX);
+  return new THREE.Quaternion().multiplyQuaternions(qX, qY);
 }

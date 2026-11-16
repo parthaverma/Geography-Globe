@@ -17,14 +17,12 @@ export default function Sidebar({ country, open, onClose }) {
     <AnimatePresence>
       {open ? (
         <>
-          <motion.button
-            type="button"
-            aria-label="Close country sidebar"
-            className="pointer-events-auto absolute inset-0 z-30 bg-black/40"
+          {/* Subtle non-blocking background gradient */}
+          <motion.div
+            className="pointer-events-none absolute inset-0 z-30"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={() => onClose?.()}
           />
 
           <motion.aside

@@ -1,38 +1,42 @@
-const LIST_URL =
-  "https://restcountries.com/v3.1/all?fields=name,cca3,capital,population,region,subregion,currencies,languages,flags,latlng";
-
-const DETAILS_FIELDS =
-  "name,cca3,capital,population,region,subregion,currencies,languages,flags,latlng";
+import countriesData from "../data/countries.json";
 
 export const getAllCountries = async () => {
   try {
-    const res = await fetch(LIST_URL);
-
-    if (!res.ok) {
-      throw new Error("Failed to fetch countries");
+    if (Array.isArray(countriesData) && countriesData.length > 0) {
+      return countriesData;
     }
 
-    const data = await res.json();
+    // Fallback to CDN mirror if local dataset is not available
+    const res = await fetch(
+      "https://cdn.jsdelivr.net/gh/dr5hn/countries-states-cities-database@master/json/countries.json"
+    );
+    if (!res.ok) throw new Error("Failed to fetch fallback countries");
 
-    return data.map((country) => ({
-      name: country.name?.common || "",
-      officialName: country.name?.official || "",
-      cca3: country.cca3 || "",
-      capital: country.capital || [],
-      population: country.population || 0,
-      region: country.region || "",
-      subregion: country.subregion || "",
-      currency: country.currencies
-        ? Object.values(country.currencies)[0]?.name
-        : "N/A",
-      currencies: country.currencies || null,
-      languages: country.languages || null,
-      flag: country.flags?.png || "",
-      latlng: country.latlng || [0, 0],
-    }));
+    const data = await res.json();
+    return data.map((c) => {
+      const cca2 = c.iso2 ? c.iso2.toLowerCase() : "";
+      return {
+        name: c.name || "",
+        officialName: c.native || c.name || "",
+        cca3: c.iso3 || "",
+        cca2: c.iso2 || "",
+        capital: c.capital ? [c.capital] : [],
+        population: c.population || 0,
+        region: c.region || "",
+        subregion: c.subregion || "",
+        currency: c.currency_name || c.currency || "N/A",
+        currencies: c.currency
+          ? { [c.currency]: { name: c.currency_name, symbol: c.currency_symbol } }
+          : null,
+        languages: null,
+        flag: cca2 ? `https://flagcdn.com/w320/${cca2}.png` : "",
+        emoji: c.emoji || "",
+        latlng: [parseFloat(c.latitude) || 0, parseFloat(c.longitude) || 0],
+      };
+    });
   } catch (error) {
     console.error("Error fetching countries:", error);
-    return [];
+    return Array.isArray(countriesData) ? countriesData : [];
   }
 };
 
@@ -40,36 +44,11 @@ export const getCountryDetailsByCca3 = async (cca3) => {
   if (!cca3) return null;
 
   try {
-    const url = `https://restcountries.com/v3.1/alpha/${encodeURIComponent(
-      cca3
-    )}?fields=${DETAILS_FIELDS}`;
-    const res = await fetch(url);
-
-    if (!res.ok) {
-      throw new Error("Failed to fetch country details");
-    }
-
-    const data = await res.json();
-    const c = Array.isArray(data) ? data[0] : data;
-
-    if (!c) return null;
-
-    return {
-      name: c.name?.common || "",
-      officialName: c.name?.official || "",
-      cca3: c.cca3 || "",
-      capital: c.capital || [],
-      population: c.population || 0,
-      region: c.region || "",
-      subregion: c.subregion || "",
-      currency: c.currencies
-        ? Object.values(c.currencies)[0]?.name
-        : "N/A",
-      currencies: c.currencies || null,
-      languages: c.languages || null,
-      flag: c.flags?.png || "",
-      latlng: c.latlng || [0, 0],
-    };
+    const list = Array.isArray(countriesData) ? countriesData : await getAllCountries();
+    const match = list.find(
+      (c) => String(c.cca3 || "").toUpperCase() === String(cca3).toUpperCase()
+    );
+    return match || null;
   } catch (error) {
     console.error("Error fetching country details:", error);
     return null;
